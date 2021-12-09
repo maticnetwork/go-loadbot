@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -17,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -55,6 +57,8 @@ var RPC_SERVER string = "http://3.94.19.25:9545"
 
 // var RPC_SERVER string = "http://127.0.0.1:8545"
 
+var MNEMONIC string = "truck gallery select material claim elephant pear dog knock kitchen runway juice"
+
 func main() {
 
 	fmt.Printf("script started \n")
@@ -83,7 +87,7 @@ func main() {
 	// SK := "7964b5b6fe2c5c7c9d2e7025dd601c4d508570e6a24cdcbaf36d70c7ddc30b10"
 	SK := "bc8737a0eb799e1273883887c7fc58a3f74ce9b26a0a40229a1d0ae7feaec9b1"
 	sk := crypto.ToECDSAUnsafe(common.FromHex(SK))
-	ksOpts, err := bind.NewKeyedTransactorWithChainID(sk, chainID)
+	// ksOpts, err := bind.NewKeyedTransactorWithChainID(sk, chainID)
 	if err != nil {
 		log.Println("Error in getting ksOpts: ", err)
 	}
@@ -119,9 +123,10 @@ func main() {
 
 	// createAccount()
 
-	generatedAccounts := generateAccount(ctx, cl)
+	// generatedAccounts := generateAccount(ctx, cl)
+	generatedAccounts := generateAccountsUsingMnemonic(ctx, cl)
 
-	fundAccounts(ctx, cl, generatedAccounts, chainID, add, ksOpts)
+	// fundAccounts(ctx, cl, generatedAccounts, chainID, add, ksOpts)
 
 	time.Sleep(10 * time.Second)
 
@@ -147,6 +152,29 @@ func generateAccount(ctx context.Context, client *ethclient.Client) (accounts Ac
 	return accounts
 }
 
+func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client) (accounts Accounts) {
+	wallet, err := hdwallet.NewFromMnemonic(MNEMONIC)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for i := 1; i <= N; i++ {
+		var dpath string = "m/44'/60'/0'/0/" + strconv.Itoa(i)
+		path := hdwallet.MustParseDerivationPath(dpath)
+		account, err := wallet.Derive(path, false)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Println("Account", i, ":", account.Address)
+		privKey, err := wallet.PrivateKey(account)
+		if err != nil {
+			log.Fatal(err)
+		}
+		accounts = append(accounts, Account{key: privKey, addr: account.Address})
+	}
+	return accounts
+}
+
 func getBalance(ctx context.Context, client *ethclient.Client, address common.Address) *big.Int {
 	balance, err := client.BalanceAt(context.Background(), address, nil)
 	if err != nil {
@@ -160,7 +188,7 @@ func fundAccounts(ctx context.Context, client *ethclient.Client, genAccounts Acc
 	senderAddress common.Address, opts *bind.TransactOpts) {
 	for i := 0; i < N; i++ {
 		fmt.Println("Reqd nonce: ", Nonce+uint64(i))
-		runTransaction(ctx, client, genAccounts[i].addr, chainID, senderAddress, opts, Nonce+uint64(i), 1)
+		runTransaction(ctx, client, genAccounts[i].addr, chainID, senderAddress, opts, Nonce+uint64(i), 1000000000000000000)
 	}
 }
 
@@ -246,7 +274,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	ticker := time.NewTicker(period)
 	group, ctx := errgroup.WithContext(ctx)
 
-	for CURRENT_ITERATIONS < 50*N {
+	for CURRENT_ITERATIONS < 100*N {
 		select {
 		case <-ticker.C:
 
@@ -298,7 +326,7 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 		To:        &recipient,
 		Value:     val,
 		GasTipCap: big.NewInt(2),
-		GasFeeCap: big.NewInt(100),
+		GasFeeCap: big.NewInt(1000),
 	})
 
 	sk := crypto.ToECDSAUnsafe(crypto.FromECDSA(sender.key)) // Sign the transaction

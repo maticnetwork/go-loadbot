@@ -66,13 +66,13 @@ func main() {
 		log.Println("Error in dial connection: ", err)
 	}
 
-	addr := common.HexToAddress("0766fd8a11485bb8c045919ac5a07c51b3d1696b")
-	balance, err := cl.BalanceAt(ctx, addr, nil)
-	if err != nil {
-		log.Println("Error in checking balance: ", err)
-	}
+	// addr := common.HexToAddress("0766fd8a11485bb8c045919ac5a07c51b3d1696b")
+	// balance, err := cl.BalanceAt(ctx, addr, nil)
+	// if err != nil {
+	// 	log.Println("Error in checking balance: ", err)
+	// }
 
-	fmt.Println("Balance: ", balance)
+	// fmt.Println("Balance: ", balance)
 
 	chainID, err := cl.ChainID(ctx)
 	if err != nil {
@@ -101,7 +101,7 @@ func main() {
 	// }
 
 	// fmt.Println("Account1: ", accs[0])
-	balance, err = cl.BalanceAt(ctx, add, nil)
+	balance, err := cl.BalanceAt(ctx, add, nil)
 	if err != nil {
 		log.Println("Error in checking balance: ", err)
 	}
@@ -142,7 +142,7 @@ func generateAccount(ctx context.Context, client *ethclient.Client) (accounts Ac
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 		accounts = append(accounts, Account{key: key, addr: addr})
 		log.Println("Account", i, ":", addr)
-		log.Println("Balance", i, ":", getBalance(ctx, client, addr))
+		// log.Println("Balance", i, ":", getBalance(ctx, client, addr))
 	}
 	return accounts
 }
@@ -160,13 +160,14 @@ func fundAccounts(ctx context.Context, client *ethclient.Client, genAccounts Acc
 	senderAddress common.Address, opts *bind.TransactOpts) {
 	for i := 0; i < N; i++ {
 		fmt.Println("Reqd nonce: ", Nonce+uint64(i))
-		runTransaction(ctx, client, genAccounts[i].addr, chainID, senderAddress, opts, Nonce+uint64(i), 1000000000000000000)
+		runTransaction(ctx, client, genAccounts[i].addr, chainID, senderAddress, opts, Nonce+uint64(i), 1)
 	}
 }
 
 func runTransaction(ctx context.Context, Clients *ethclient.Client, recipient common.Address, chainID *big.Int,
 	senderAddress common.Address, opts *bind.TransactOpts, nonce uint64, value int64) {
 
+	fmt.Println("Running transaction : ", nonce)
 	var data []byte
 	gasLimit := uint64(21000)
 	gasPrice, err := Clients.SuggestGasPrice(context.Background())

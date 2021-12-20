@@ -110,6 +110,7 @@ func main() {
 	fmt.Println("N: ", N)
 	fmt.Println("MAX_ACCOUNTS: ", MAX_ACCOUNTS)
 	fmt.Println("MAX_SIZE: ", MAX_SIZE)
+	fmt.Println("DATA_PATH: ", DATA_PATH)
 
 	main1()
 }
@@ -310,11 +311,13 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 		}
 		flag++
 		fmt.Printf("i is %v \n", i)
-		nonce, err := client.PendingNonceAt(ctx, a.addr)
-		if err != nil {
-			fmt.Errorf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
-		}
-		nonces[i] = nonce
+		go func(i int, a Account) {
+			nonce, err := client.PendingNonceAt(ctx, a.addr)
+			if err != nil {
+				fmt.Errorf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
+			}
+			nonces[i] = nonce
+		}(i, a)
 	}
 
 	fmt.Printf("intialization completed \n")
@@ -326,7 +329,8 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	ticker := time.NewTicker(period)
 	group, ctx := errgroup.WithContext(ctx)
 
-	for CURRENT_ITERATIONS < 200*N {
+	// for CURRENT_ITERATIONS < 200*N {
+	for {
 		select {
 		case <-ticker.C:
 
@@ -441,7 +445,7 @@ func checkChainData() int64 {
 		fmt.Println("Error in getting chaindata size: ", err)
 		os.Exit(0)
 	}
-	fmt.Println("chaindata size: ", size/1000, "KB\n") // Originally the size is in returned in bytes
+	fmt.Println("chaindata size: ", size/1024, "KB\n") // Originally the size is in returned in bytes
 
-	return size / 1000
+	return size / 1024
 }

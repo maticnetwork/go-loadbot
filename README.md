@@ -21,7 +21,7 @@ Other important  flags are -
 
 - SK - Secret key/private key of the metamask first account, having sufficient balance to carry out the loadbot transactions
 
-- TPS - Transactions per second (default value: 500). It also refers to the total accounts, that will transfer the native tokens to the newly generated accounts
+- SPEED - 5 * SPEED is ~ Transactions per second emitted by loadbot. It also refers to the total accounts, that will transfer the native tokens to the newly generated accounts
 
 - DATA_PATH - Refers to the chaindata folder path, whose size will be computed after each transaction, and the script will stop if MAX_SIZE is reached.
 

@@ -6,10 +6,10 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"fmt"
 	"log"
 	"math/big"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -162,8 +162,12 @@ func main1() {
 	INITIAL_SIZE = checkChainData()
 
 	fmt.Println("Preparing")
-	fmt.Println("Loadbot Starting in 15 secs")
-	time.Sleep(15 * time.Second)
+	if fund == "true" {
+		fmt.Println("Loadbot Starting in 15 secs")
+		time.Sleep(15 * time.Second)
+	} else {
+		time.Sleep(2 * time.Second)
+	}
 
 	startLoadbot(ctx, cl, chainID, generatedAccounts)
 
@@ -176,16 +180,16 @@ type Account struct {
 
 type Accounts []Account
 
-func generateAccount(ctx context.Context, client *ethclient.Client) (accounts Accounts) {
-	for i := 0; i < N; i++ {
-		key, _ := crypto.GenerateKey()
-		addr := crypto.PubkeyToAddress(key.PublicKey)
-		accounts = append(accounts, Account{key: key, addr: addr})
-		log.Println("Account", i, ":", addr)
-		// log.Println("Balance", i, ":", getBalance(ctx, client, addr))
-	}
-	return accounts
-}
+// func generateAccount(ctx context.Context, client *ethclient.Client) (accounts Accounts) {
+// 	for i := 0; i < N; i++ {
+// 		key, _ := crypto.GenerateKey()
+// 		addr := crypto.PubkeyToAddress(key.PublicKey)
+// 		accounts = append(accounts, Account{key: key, addr: addr})
+// 		log.Println("Account", i, ":", addr)
+// 		// log.Println("Balance", i, ":", getBalance(ctx, client, addr))
+// 	}
+// 	return accounts
+// }
 
 func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client) (accounts Accounts) {
 	wallet, err := hdwallet.NewFromMnemonic(MNEMONIC)
@@ -210,14 +214,14 @@ func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client
 	return accounts
 }
 
-func getBalance(ctx context.Context, client *ethclient.Client, address common.Address) *big.Int {
-	balance, err := client.BalanceAt(context.Background(), address, nil)
-	if err != nil {
-		log.Println("Error in checking balance: ", err)
-	}
-	// fmt.Println("Balance: ", balance)
-	return balance
-}
+// func getBalance(ctx context.Context, client *ethclient.Client, address common.Address) *big.Int {
+// 	balance, err := client.BalanceAt(context.Background(), address, nil)
+// 	if err != nil {
+// 		log.Println("Error in checking balance: ", err)
+// 	}
+// 	// fmt.Println("Balance: ", balance)
+// 	return balance
+// }
 
 func fundAccounts(ctx context.Context, client *ethclient.Client, genAccounts Accounts, chainID *big.Int,
 	senderAddress common.Address, opts *bind.TransactOpts) {
@@ -237,7 +241,7 @@ func runTransaction(ctx context.Context, Clients *ethclient.Client, recipient co
 	// if err != nil {
 	// 	log.Fatal(err)
 	// }
-	gasPrice := big.NewInt(3000000)
+	gasPrice := big.NewInt(1000000000)
 
 	val := big.NewInt(value)
 
@@ -311,7 +315,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 		go func(i int, a Account, m *sync.Mutex) {
 			nonce, err := client.PendingNonceAt(ctx, a.addr)
 			if err != nil {
-				fmt.Errorf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
+				fmt.Printf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
 			}
 			m.Lock()
 			noncesStruct.nonces[i] = nonce
@@ -405,10 +409,15 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	}
 }
 
-func genRandomGas(min int, max int) *big.Int {
-	rand.Seed(time.Now().UnixNano())
-	// fmt.Println(rand.Intn(max-min+1) + min)
-	return big.NewInt(int64(rand.Intn(max-min+1) + min))
+func genRandomGas(min int64, max int64) *big.Int {
+	bg := big.NewInt(max - min)
+
+	n, err := rand.Int(rand.Reader, bg)
+	if err != nil {
+		panic(err)
+	}
+
+	return big.NewInt(n.Int64() + min)
 }
 
 func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient common.Address, chainID *big.Int,
@@ -416,7 +425,24 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 
 	var data []byte
 	gasLimit := uint64(21000)
-	gasPrice := genRandomGas(20000, 30000)
+	var gasPrice *big.Int
+
+	r := nonce % 6
+	switch r {
+	case 0:
+		gasPrice = genRandomGas(32000, 34000)
+	case 1:
+		gasPrice = genRandomGas(22000, 24000)
+	case 2:
+		gasPrice = genRandomGas(28000, 30000)
+	case 3:
+		gasPrice = genRandomGas(26000, 28000)
+	case 4:
+		gasPrice = genRandomGas(20000, 24000)
+	case 5:
+		gasPrice = genRandomGas(30000, 32000)
+
+	}
 
 	val := big.NewInt(value)
 
@@ -461,7 +487,7 @@ func checkChainData() int64 {
 		fmt.Println("Error in getting chaindata size: ", err)
 		os.Exit(0)
 	}
-	fmt.Println("chaindata size: ", size/1024, "KB\n") // Originally the size is in returned in bytes
+	fmt.Print("chaindata size: ", size/1024, "KB\n\n") // Originally the size is in returned in bytes
 
 	return size / 1024
 }

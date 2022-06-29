@@ -180,17 +180,6 @@ type Account struct {
 
 type Accounts []Account
 
-// func generateAccount(ctx context.Context, client *ethclient.Client) (accounts Accounts) {
-// 	for i := 0; i < N; i++ {
-// 		key, _ := crypto.GenerateKey()
-// 		addr := crypto.PubkeyToAddress(key.PublicKey)
-// 		accounts = append(accounts, Account{key: key, addr: addr})
-// 		log.Println("Account", i, ":", addr)
-// 		// log.Println("Balance", i, ":", getBalance(ctx, client, addr))
-// 	}
-// 	return accounts
-// }
-
 func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client) (accounts Accounts) {
 	wallet, err := hdwallet.NewFromMnemonic(MNEMONIC)
 	if err != nil {
@@ -214,15 +203,6 @@ func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client
 	return accounts
 }
 
-// func getBalance(ctx context.Context, client *ethclient.Client, address common.Address) *big.Int {
-// 	balance, err := client.BalanceAt(context.Background(), address, nil)
-// 	if err != nil {
-// 		log.Println("Error in checking balance: ", err)
-// 	}
-// 	// fmt.Println("Balance: ", balance)
-// 	return balance
-// }
-
 func fundAccounts(ctx context.Context, client *ethclient.Client, genAccounts Accounts, chainID *big.Int,
 	senderAddress common.Address, opts *bind.TransactOpts) {
 	for i := 0; i < N; i++ {
@@ -237,10 +217,7 @@ func runTransaction(ctx context.Context, Clients *ethclient.Client, recipient co
 	fmt.Println("Running transaction : ", nonce)
 	var data []byte
 	gasLimit := uint64(21000)
-	// gasPrice, err := Clients.SuggestGasPrice(context.Background())
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+
 	gasPrice := big.NewInt(1000000000)
 
 	val := big.NewInt(value)
@@ -249,7 +226,6 @@ func runTransaction(ctx context.Context, Clients *ethclient.Client, recipient co
 
 	signedTx, err := opts.Signer(senderAddress, tx)
 
-	// signedTx, err4 := types.SignTx(tx, types.NewEIP155Signer(chainID), txCfg.Acc.PrivateKey)
 	if err != nil {
 		log.Fatal("Error in signing tx: ", err)
 	}
@@ -257,7 +233,6 @@ func runTransaction(ctx context.Context, Clients *ethclient.Client, recipient co
 	if err != nil {
 		log.Fatal("Error in sending tx: ", err)
 	}
-	// Nonce++
 }
 
 func createAccount() Account {
@@ -266,20 +241,13 @@ func createAccount() Account {
 		log.Fatal(err)
 	}
 
-	// privateKeyBytes := crypto.FromECDSA(privateKey)
-	// fmt.Println("Private Key:", hexutil.Encode(privateKeyBytes))
-
 	publicKey := privateKey.Public()
 	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
 		log.Fatal("cannot assert type: publicKey is not of type *ecdsa.PublicKey")
 	}
 
-	// publicKeyBytes := crypto.FromECDSAPub(publicKeyECDSA)
-	// fmt.Println("Public Key:", hexutil.Encode(publicKeyBytes))
-
 	address := crypto.PubkeyToAddress(*publicKeyECDSA)
-	// fmt.Println("Generated Address:", address)
 
 	account := Account{key: privateKey, addr: address}
 	return account
@@ -291,11 +259,6 @@ type Nonces struct {
 	nonces []uint64
 }
 
-// type WaitGroups struct {
-// 	mu         sync.Mutex
-// 	waitGroups []*sync.WaitGroup
-// }
-
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
 	genAccounts Accounts) {
 
@@ -304,7 +267,6 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 		nonces: make([]uint64, N),
 	}
 
-	// nonces := make([]uint64, N) //len(cfg.Accounts)
 	flag := 0
 	for i, a := range genAccounts {
 		if flag >= N {
@@ -330,9 +292,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	// Fire off transactions
 	period := 1 * time.Second / time.Duration(N)
 	ticker := time.NewTicker(period)
-	// group, ctx := errgroup.WithContext(ctx)
 
-	// for CURRENT_ITERATIONS < 200*N {
 	for {
 		select {
 		case <-ticker.C:
@@ -461,7 +421,6 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 	}
 
 	err = Clients.SendTransaction(ctx, signedTx)
-	// fmt.Println("Sender", sender.addr, "Receipient", recipient.Hash(), "nonce", nonce)
 	if err != nil {
 		log.Fatalf("Error in sending tx: %s, From : %s, To : %s", err, sender.addr, recipient.Hash())
 	}

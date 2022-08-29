@@ -6,7 +6,7 @@ The tool is used to perform stress testing on ethereum based blockchains. It tra
 
 ## Config Variables
 
-All the configurations are to me made in the [.env](maticnetwork/go-loadbot/blob/main/.env) file. Basically, we have two important flags to execute the loadbot. They are -
+All the configurations are to me made in the [.env](go-loadbot/blob/main/.env) file. Basically, we have two important flags to execute the loadbot. They are -
 
 - MAX_ACCOUNTS - Refers to the maximum number of accounts to generate and send the transactions to.
 

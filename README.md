@@ -26,3 +26,9 @@ Other important  flags are -
 - DATA_PATH - Refers to the chaindata folder path, whose size will be computed after each transaction, and the script will stop if MAX_SIZE is reached.
 
 - FUND - Flag to fund the accounts or not (total accounts to fund = TPS). It can either have the value true or false. For running the loadbot first time, it should be kept true so as to fund all the accounts that will transfer the fund to newly created accounts.
+
+
+## Instructions to run the loadbot
+
+- Run the [`main.go`](main.go) file with the following command, to start the loadbot.
+    - `go run main.go`

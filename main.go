@@ -262,6 +262,22 @@ type Nonces struct {
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
 	genAccounts Accounts) {
 
+	if MAX_SIZE > 0 {
+		go func() {
+			for {
+
+				currentSize := checkChainData()
+				if (currentSize - INITIAL_SIZE) > int64(MAX_SIZE) {
+					fmt.Println("Size limit reached!!!")
+					os.Exit(0)
+				}
+
+				time.Sleep(5 * time.Second)
+			}
+
+		}()
+	}
+
 	fmt.Printf("Loadbot started \n")
 	noncesStruct := &Nonces{
 		nonces: make([]uint64, N),
@@ -300,15 +316,6 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 			fmt.Println("CURRENT_ACCOUNTS: ", CURRENT_ITERATIONS)
 			if MAX_ACCOUNTS > 0 && CURRENT_ITERATIONS >= MAX_ACCOUNTS {
 				os.Exit(0)
-			}
-
-			// checkChainDataByScript()
-			if MAX_SIZE > 0 {
-				currentSize := checkChainData()
-				if (currentSize - INITIAL_SIZE) > int64(MAX_SIZE) {
-					fmt.Println("Size limit reached!!!")
-					os.Exit(0)
-				}
 			}
 
 			recpIdx++

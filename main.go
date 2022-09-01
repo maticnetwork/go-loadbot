@@ -272,7 +272,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 					os.Exit(0)
 				}
 
-				time.Sleep(5 * time.Second)
+				time.Sleep(10 * time.Second)
 			}
 
 		}()

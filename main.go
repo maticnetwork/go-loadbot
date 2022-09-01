@@ -431,7 +431,7 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 
 	err = Clients.SendTransaction(ctx, signedTx)
 	if err != nil {
-		fmt.Printf("Error in sending tx: %s, From : %s, To : %s", err, sender.addr, recipient.Hash())
+		fmt.Printf("Error in sending tx: %s, From : %s, To : %s\n", err, sender.addr, recipient.Hash())
 	}
 	// Nonce++
 	CURRENT_ITERATIONS++

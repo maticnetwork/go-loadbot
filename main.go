@@ -313,7 +313,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 		select {
 		case <-ticker.C:
 
-			if CURRENT_ITERATIONS%100 == 0 {
+			if CURRENT_ITERATIONS%100 == 0 && CURRENT_ITERATIONS > 0 {
 				fmt.Println("CURRENT_ACCOUNTS: ", CURRENT_ITERATIONS)
 			}
 			if MAX_ACCOUNTS > 0 && CURRENT_ITERATIONS >= MAX_ACCOUNTS {

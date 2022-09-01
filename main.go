@@ -262,6 +262,22 @@ type Nonces struct {
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
 	genAccounts Accounts) {
 
+	if MAX_SIZE > 0 {
+		go func() {
+			for {
+
+				currentSize := checkChainData()
+				if (currentSize - INITIAL_SIZE) > int64(MAX_SIZE) {
+					fmt.Println("Size limit reached!!!")
+					os.Exit(0)
+				}
+
+				time.Sleep(10 * time.Second)
+			}
+
+		}()
+	}
+
 	fmt.Printf("Loadbot started \n")
 	noncesStruct := &Nonces{
 		nonces: make([]uint64, N),
@@ -297,18 +313,11 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 		select {
 		case <-ticker.C:
 
-			fmt.Println("CURRENT_ACCOUNTS: ", CURRENT_ITERATIONS)
+			if CURRENT_ITERATIONS%100 == 0 && CURRENT_ITERATIONS > 0 {
+				fmt.Println("CURRENT_ACCOUNTS: ", CURRENT_ITERATIONS)
+			}
 			if MAX_ACCOUNTS > 0 && CURRENT_ITERATIONS >= MAX_ACCOUNTS {
 				os.Exit(0)
-			}
-
-			// checkChainDataByScript()
-			if MAX_SIZE > 0 {
-				currentSize := checkChainData()
-				if (currentSize - INITIAL_SIZE) > int64(MAX_SIZE) {
-					fmt.Println("Size limit reached!!!")
-					os.Exit(0)
-				}
 			}
 
 			recpIdx++
@@ -422,7 +431,7 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 
 	err = Clients.SendTransaction(ctx, signedTx)
 	if err != nil {
-		log.Fatalf("Error in sending tx: %s, From : %s, To : %s", err, sender.addr, recipient.Hash())
+		fmt.Printf("Error in sending tx: %s, From : %s, To : %s\n", err, sender.addr, recipient.Hash())
 	}
 	// Nonce++
 	CURRENT_ITERATIONS++

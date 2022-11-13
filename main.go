@@ -300,14 +300,35 @@ func startLoadbot(ctx context.Context, client ethClient, chainID *big.Int,
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 
-	iteration := new(int64)
+	tpsTicker := time.NewTicker(time.Second)
+	defer tpsTicker.Stop()
 
-	var prev time.Time
+	iteration := new(int64)
+	lastSecondTxs := new(int64)
+
+	var (
+		prev       time.Time
+		lastSecond = time.Now()
+	)
 
 	for {
 		prev = time.Now()
 
 		select {
+		case <-tpsTicker.C:
+			currentTxs := atomic.SwapInt64(lastSecondTxs, 0)
+			since := time.Since(lastSecond)
+
+			// FIXME: usual log on the same time.Sleep for SendTransaction is:
+			// 2022/11/14 00:01:33 average TPS last second: 499.005094(999.989791ms)
+			// which is much higher than 100 TPS in the config
+			log.Printf("average TPS last second: %0.6f(%v)\n",
+				float64(currentTxs)/float64(since)*float64(time.Second),
+				since,
+			)
+
+			lastSecond = time.Now()
+
 		case <-ticker.C:
 			currentIteration := atomic.LoadInt64(iteration)
 
@@ -354,6 +375,7 @@ func startLoadbot(ctx context.Context, client ethClient, chainID *big.Int,
 					}
 
 					atomic.AddUint64(&noncesStruct.nonces[accountIDx], 1)
+					atomic.AddInt64(lastSecondTxs, 1)
 				}
 			}(sender, nonce)
 

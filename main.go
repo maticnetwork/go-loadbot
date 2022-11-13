@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -23,104 +24,50 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	"github.com/sethvargo/go-envconfig"
 )
 
-var RPC_SERVER string
-var MNEMONIC string
-var SK string
-var N int
-var MAX_ACCOUNTS int
-var MAX_SIZE int
-var DATA_PATH string
-
-var CURRENT_ITERATIONS int = 0
-var Nonce uint64 = 0
-var INITIAL_SIZE int64
+type Config struct {
+	RPCServer   string `env:"RPC_SERVER,required"`
+	Mnemonic    string `env:"MNEMONIC,required"`
+	SK          string `env:"SK,required"`
+	TPS         int    `env:"SPEED,default=100"` // fixme: it's more like TotalTxs. could we specify TPS?
+	MaxAccounts int    `env:"MAX_ACCOUNTS"`
+	MaxSize     int    `env:"MAX_SIZE"`
+	DataPath    string `env:"DATA_PATH,required"`
+	Fund        bool   `env:"FUND"`
+}
 
 func main() {
 	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatalf("Some error occured. Err: %s", err)
 	}
-	RPC_SERVER = os.Getenv("RPC_SERVER")
-	if len(RPC_SERVER) == 0 {
-		fmt.Println("Invalid RPC_SERVER flag")
-		return
+
+	var cfg Config
+
+	if err = envconfig.Process(context.Background(), &cfg); err != nil {
+		log.Fatal(err)
 	}
 
-	MNEMONIC = os.Getenv("MNEMONIC")
-	if len(MNEMONIC) == 0 {
-		fmt.Println("Invalid MNEMONIC flag")
-		return
-	}
-
-	SK = os.Getenv("SK")
-	if len(SK) == 0 {
-		fmt.Println("Invalid SK flag")
-		return
-	}
-
-	TPS := os.Getenv("SPEED")
-	if len(TPS) == 0 {
-		N = 100
-	} else {
-		i, err := strconv.Atoi(TPS)
-		if err != nil {
-			fmt.Println("Invalid TPS flag")
-			return
-		}
-		N = i
-	}
-
-	acc := os.Getenv("MAX_ACCOUNTS")
-	size := os.Getenv("MAX_SIZE")
-	if len(acc) == 0 && len(size) == 0 {
+	if cfg.MaxAccounts == 0 && cfg.MaxSize == 0 {
 		fmt.Println("Both MAX_ACCOUNTS and MAX_SIZE flags cannot be empty")
 		return
 
 	}
-	if len(size) != 0 {
-		i, err := strconv.Atoi(size)
-		if err != nil {
-			fmt.Println("Invalid MAX_SIZE flag")
-			return
-		}
-		MAX_SIZE = i
 
-	}
-	if len(acc) != 0 {
-		i, err := strconv.Atoi(acc)
-		if err != nil {
-			fmt.Println("Invalid MAX_ACCOUNTS flag")
-			return
-		}
-		MAX_ACCOUNTS = i
-	}
+	spew.Dump(cfg)
 
-	DATA_PATH = os.Getenv("DATA_PATH")
-	if len(DATA_PATH) == 0 {
-		fmt.Println("Invalid DATA_PATH flag")
-		return
-	}
-
-	fmt.Println("RPC_SERVER: ", RPC_SERVER)
-	fmt.Println("MNEMONIC: ", MNEMONIC)
-	fmt.Println("SK: ", SK)
-	fmt.Println("N: ", N)
-	fmt.Println("MAX_ACCOUNTS: ", MAX_ACCOUNTS)
-	fmt.Println("MAX_SIZE: ", MAX_SIZE)
-	fmt.Println("DATA_PATH: ", DATA_PATH)
-
-	main1()
+	run(&cfg)
 }
 
-func main1() {
+func run(cfg *Config) {
 
 	fmt.Printf("script started \n")
 
 	ctx := context.Background()
 
-	cl, err := ethclient.Dial(RPC_SERVER)
+	cl, err := ethclient.Dial(cfg.RPCServer)
 	if err != nil {
 		log.Println("Error in dial connection: ", err)
 	}
@@ -131,7 +78,7 @@ func main1() {
 	}
 	fmt.Println("Chain ID: ", chainID)
 
-	sk := crypto.ToECDSAUnsafe(common.FromHex(SK))
+	sk := crypto.ToECDSAUnsafe(common.FromHex(cfg.SK))
 	ksOpts, err := bind.NewKeyedTransactorWithChainID(sk, chainID)
 	if err != nil {
 		log.Println("Error in getting ksOpts: ", err)
@@ -144,33 +91,32 @@ func main1() {
 	}
 	fmt.Println("Balance: ", balance)
 
-	nonce, err := cl.PendingNonceAt(ctx, add)
+	localNonce, err := cl.PendingNonceAt(ctx, add)
 	if err != nil {
-		log.Fatalln("Error in getting pendingNonce: ", nonce)
-	} else {
-		Nonce = nonce
-	}
-	fmt.Println("Nonce: ", Nonce)
-
-	generatedAccounts := generateAccountsUsingMnemonic(ctx, cl, N)
-
-	fund := os.Getenv("FUND")
-	if fund == "true" {
-		fundAccounts(ctx, cl, generatedAccounts, chainID, add, ksOpts)
+		log.Fatalln("Error in getting pendingNonce: ", localNonce)
 	}
 
-	INITIAL_SIZE = checkChainData()
+	fmt.Println("Nonce: ", localNonce)
+
+	generatedAccounts := generateAccountsUsingMnemonic(ctx, cl, cfg)
+
+	if cfg.Fund {
+		fundAccounts(ctx, cl, generatedAccounts, chainID, add, localNonce, cfg.TPS, ksOpts)
+	}
+
+	initialSize := checkChainData(cfg)
 
 	fmt.Println("Preparing")
-	if fund == "true" {
+
+	if cfg.Fund {
 		fmt.Println("Loadbot Starting in 15 secs")
+
 		time.Sleep(15 * time.Second)
 	} else {
 		time.Sleep(2 * time.Second)
 	}
 
-	startLoadbot(ctx, cl, chainID, generatedAccounts)
-
+	startLoadbot(ctx, cl, chainID, generatedAccounts, cfg, initialSize)
 }
 
 type Account struct {
@@ -180,13 +126,13 @@ type Account struct {
 
 type Accounts []Account
 
-func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client, n int) (accounts Accounts) {
-	wallet, err := hdwallet.NewFromMnemonic(MNEMONIC)
+func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client, cfg *Config) (accounts Accounts) {
+	wallet, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	for i := 1; i <= n; i++ {
+	for i := 1; i <= cfg.TPS; i++ {
 		var dpath = "m/44'/60'/0'/0/" + strconv.Itoa(i)
 
 		path := hdwallet.MustParseDerivationPath(dpath)
@@ -210,10 +156,11 @@ func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client
 }
 
 func fundAccounts(ctx context.Context, client *ethclient.Client, genAccounts Accounts, chainID *big.Int,
-	senderAddress common.Address, opts *bind.TransactOpts) {
-	for i := 0; i < N; i++ {
-		fmt.Println("Reqd nonce: ", Nonce+uint64(i))
-		runTransaction(ctx, client, genAccounts[i].addr, chainID, senderAddress, opts, Nonce+uint64(i), 10000000000000000)
+	senderAddress common.Address, localNonce uint64, tps int, opts *bind.TransactOpts) {
+	for i := 0; i < tps; i++ {
+		fmt.Println("Reqd nonce: ", localNonce+uint64(i))
+
+		runTransaction(ctx, client, genAccounts[i].addr, chainID, senderAddress, opts, localNonce+uint64(i), 10000000000000000)
 	}
 }
 
@@ -265,20 +212,20 @@ type Nonces struct {
 }
 
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
-	genAccounts Accounts) {
+	genAccounts Accounts, cfg *Config, initialSize int64) {
 
 	checksInProgress := new(int64)
 	pendingNonceInProgress := new(int64)
 	transactionInProgress := new(int64)
 
-	if MAX_SIZE > 0 {
+	if cfg.MaxSize > 0 {
 		go func() {
 			atomic.AddInt64(checksInProgress, 1)
 			defer atomic.AddInt64(checksInProgress, -1)
 
 			for {
-				currentSize := checkChainData()
-				if (currentSize - INITIAL_SIZE) > int64(MAX_SIZE) {
+				currentSize := checkChainData(cfg)
+				if (currentSize - initialSize) > int64(cfg.MaxSize) {
 					fmt.Println("Size limit reached!!!")
 					os.Exit(0)
 				}
@@ -291,10 +238,10 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 
 	fmt.Printf("Loadbot started \n")
 	noncesStruct := &Nonces{
-		nonces: make([]*uint64, N),
+		nonces: make([]*uint64, cfg.TPS),
 	}
 
-	for i, a := range genAccounts[:N] {
+	for i, a := range genAccounts[:cfg.TPS] {
 		fmt.Printf("i is %v \n", i)
 
 		go func(i int, a Account) {
@@ -317,8 +264,10 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	sendIdx := 0
 
 	// Fire off transactions
-	period := 1 * time.Second / time.Duration(N)
+	period := 1 * time.Second / time.Duration(cfg.TPS)
 	ticker := time.NewTicker(period)
+
+	iteration := new(int64)
 
 	for {
 		fmt.Printf("goroutines: transactions %d, checks %d, getting nonces %d\n",
@@ -329,17 +278,20 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 
 		select {
 		case <-ticker.C:
-			if CURRENT_ITERATIONS%100 == 0 && CURRENT_ITERATIONS > 0 {
-				fmt.Println("CURRENT_ACCOUNTS: ", CURRENT_ITERATIONS)
+			currentIteration := atomic.LoadInt64(iteration)
+
+			if currentIteration%100 == 0 && currentIteration > 0 {
+				fmt.Println("CURRENT_ACCOUNTS: ", iteration)
 			}
-			if MAX_ACCOUNTS > 0 && CURRENT_ITERATIONS >= MAX_ACCOUNTS {
+
+			if cfg.MaxAccounts > 0 && currentIteration >= int64(cfg.MaxAccounts) {
 				os.Exit(0)
 			}
 
 			recpIdx++
 			sendIdx++
 
-			accountIDx := sendIdx % N
+			accountIDx := sendIdx % cfg.TPS
 
 			sender := genAccounts[accountIDx] //cfg.Accounts[sendIdx%len(cfg.Accounts)]
 			nonce := atomic.LoadUint64(noncesStruct.nonces[accountIDx])
@@ -355,7 +307,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 					recpointer := createAccount()
 					recipient := recpointer.addr
 
-					err := runBotTransaction(ctx, client, recipient, chainID, sender, nonce+uint64(i), 1)
+					err := runBotTransaction(ctx, client, recipient, chainID, sender, nonce+uint64(i), 1, iteration)
 					if err != nil {
 						return err
 					}
@@ -385,7 +337,7 @@ func genRandomGas(min int64, max int64) *big.Int {
 }
 
 func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient common.Address, chainID *big.Int,
-	sender Account, nonce uint64, value int64) error {
+	sender Account, nonce uint64, value int64, iteration *int64) error {
 
 	var data []byte
 	gasLimit := uint64(21000)
@@ -428,28 +380,32 @@ func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient
 	if err != nil {
 		fmt.Printf("Error in sending tx: %s, From : %s, To : %s\n", err, sender.addr, recipient.Hash())
 	}
+
 	// Nonce++
-	CURRENT_ITERATIONS++
+	atomic.AddInt64(iteration, 1)
 
 	return err
 }
 
-func checkChainData() int64 {
+func checkChainData(cfg *Config) int64 {
 	var size int64
-	err := filepath.Walk(DATA_PATH, func(_ string, info os.FileInfo, err error) error {
+	err := filepath.Walk(cfg.DataPath, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
+
 		if !info.IsDir() {
 			size += info.Size()
 		}
-		return err
+
+		return nil
 	})
 
 	if err != nil {
 		fmt.Println("Error in getting chaindata size: ", err)
 		os.Exit(0)
 	}
+
 	fmt.Print("chaindata size: ", size/1024, "KB\n\n") // Originally the size is in returned in bytes
 
 	return size / 1024

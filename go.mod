@@ -3,9 +3,11 @@ module go-loadbot
 go 1.19
 
 require (
+	github.com/davecgh/go-spew v1.1.1
 	github.com/ethereum/go-ethereum v1.10.13
 	github.com/joho/godotenv v1.4.0
 	github.com/miguelmota/go-ethereum-hdwallet v0.1.1
+	github.com/sethvargo/go-envconfig v0.8.2
 )
 
 require (

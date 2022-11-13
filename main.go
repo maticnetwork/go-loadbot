@@ -13,7 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -152,7 +152,7 @@ func main1() {
 	}
 	fmt.Println("Nonce: ", Nonce)
 
-	generatedAccounts := generateAccountsUsingMnemonic(ctx, cl)
+	generatedAccounts := generateAccountsUsingMnemonic(ctx, cl, N)
 
 	fund := os.Getenv("FUND")
 	if fund == "true" {
@@ -180,26 +180,32 @@ type Account struct {
 
 type Accounts []Account
 
-func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client) (accounts Accounts) {
+func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client, n int) (accounts Accounts) {
 	wallet, err := hdwallet.NewFromMnemonic(MNEMONIC)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	for i := 1; i <= N; i++ {
-		var dpath string = "m/44'/60'/0'/0/" + strconv.Itoa(i)
+	for i := 1; i <= n; i++ {
+		var dpath = "m/44'/60'/0'/0/" + strconv.Itoa(i)
+
 		path := hdwallet.MustParseDerivationPath(dpath)
+
 		account, err := wallet.Derive(path, false)
 		if err != nil {
 			log.Fatal(err)
 		}
+
 		log.Println("Account", i, ":", account.Address)
+
 		privKey, err := wallet.PrivateKey(account)
 		if err != nil {
 			log.Fatal(err)
 		}
+
 		accounts = append(accounts, Account{key: privKey, addr: account.Address})
 	}
+
 	return accounts
 }
 
@@ -255,17 +261,22 @@ func createAccount() Account {
 }
 
 type Nonces struct {
-	mu     sync.Mutex
-	nonces []uint64
+	nonces []*uint64
 }
 
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
 	genAccounts Accounts) {
 
+	checksInProgress := new(int64)
+	pendingNonceInProgress := new(int64)
+	transactionInProgress := new(int64)
+
 	if MAX_SIZE > 0 {
 		go func() {
-			for {
+			atomic.AddInt64(checksInProgress, 1)
+			defer atomic.AddInt64(checksInProgress, -1)
 
+			for {
 				currentSize := checkChainData()
 				if (currentSize - INITIAL_SIZE) > int64(MAX_SIZE) {
 					fmt.Println("Size limit reached!!!")
@@ -280,25 +291,25 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 
 	fmt.Printf("Loadbot started \n")
 	noncesStruct := &Nonces{
-		nonces: make([]uint64, N),
+		nonces: make([]*uint64, N),
 	}
 
-	flag := 0
-	for i, a := range genAccounts {
-		if flag >= N {
-			break
-		}
-		flag++
+	for i, a := range genAccounts[:N] {
 		fmt.Printf("i is %v \n", i)
-		go func(i int, a Account, m *sync.Mutex) {
+
+		go func(i int, a Account) {
+			atomic.AddInt64(pendingNonceInProgress, 1)
+			defer atomic.AddInt64(pendingNonceInProgress, -1)
+
+			// fixme: why do we need it? at the beginning all nonces are 0, after starting sending transactions we are storing local nonces.
 			nonce, err := client.PendingNonceAt(ctx, a.addr)
 			if err != nil {
 				fmt.Printf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
+				return
 			}
-			m.Lock()
-			noncesStruct.nonces[i] = nonce
-			m.Unlock()
-		}(i, a, &noncesStruct.mu)
+
+			atomic.StoreUint64(noncesStruct.nonces[i], nonce)
+		}(i, a)
 	}
 
 	fmt.Printf("intialization completed \n")
@@ -310,9 +321,14 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	ticker := time.NewTicker(period)
 
 	for {
+		fmt.Printf("goroutines: transactions %d, checks %d, getting nonces %d\n",
+			atomic.LoadInt64(transactionInProgress),
+			atomic.LoadInt64(checksInProgress),
+			atomic.LoadInt64(pendingNonceInProgress),
+		)
+
 		select {
 		case <-ticker.C:
-
 			if CURRENT_ITERATIONS%100 == 0 && CURRENT_ITERATIONS > 0 {
 				fmt.Println("CURRENT_ACCOUNTS: ", CURRENT_ITERATIONS)
 			}
@@ -322,55 +338,34 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 
 			recpIdx++
 			sendIdx++
-			sender := genAccounts[sendIdx%N] //cfg.Accounts[sendIdx%len(cfg.Accounts)]
-			nonce := noncesStruct.nonces[sendIdx%N]
 
+			accountIDx := sendIdx % N
+
+			sender := genAccounts[accountIDx] //cfg.Accounts[sendIdx%len(cfg.Accounts)]
+			nonce := atomic.LoadUint64(noncesStruct.nonces[accountIDx])
+
+			const repeats = 5
+
+			// FIXME: we do nothing with the error
 			go func(sender Account, nonce uint64) error {
+				atomic.AddInt64(transactionInProgress, 1)
+				defer atomic.AddInt64(transactionInProgress, -1)
 
-				recpointer := createAccount()
-				recipient := recpointer.addr
+				for i := 0; i < repeats; i++ {
+					recpointer := createAccount()
+					recipient := recpointer.addr
 
-				recpointer2 := createAccount()
-				recipient2 := recpointer2.addr
+					err := runBotTransaction(ctx, client, recipient, chainID, sender, nonce+uint64(i), 1)
+					if err != nil {
+						return err
+					}
 
-				recpointer3 := createAccount()
-				recipient3 := recpointer3.addr
-
-				recpointer4 := createAccount()
-				recipient4 := recpointer4.addr
-
-				recpointer5 := createAccount()
-				recipient5 := recpointer5.addr
-
-				err := runBotTransaction(ctx, client, recipient, chainID, sender, nonce, 1)
-				if err != nil {
-					return err
-				}
-
-				err = runBotTransaction(ctx, client, recipient2, chainID, sender, nonce+1, 1)
-				if err != nil {
-					return err
-				}
-
-				err = runBotTransaction(ctx, client, recipient3, chainID, sender, nonce+2, 1)
-				if err != nil {
-					return err
-				}
-
-				err = runBotTransaction(ctx, client, recipient4, chainID, sender, nonce+3, 1)
-				if err != nil {
-					return err
-				}
-
-				err = runBotTransaction(ctx, client, recipient5, chainID, sender, nonce+4, 1)
-				if err != nil {
-					return err
+					atomic.AddUint64(noncesStruct.nonces[accountIDx], 1)
 				}
 
 				return nil
 
 			}(sender, nonce)
-			noncesStruct.nonces[sendIdx%N] = noncesStruct.nonces[sendIdx%N] + 5
 
 		case <-ctx.Done():
 			// return group.Wait()
@@ -389,7 +384,7 @@ func genRandomGas(min int64, max int64) *big.Int {
 	return big.NewInt(n.Int64() + min)
 }
 
-func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient common.Address, chainID *big.Int,
+func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient common.Address, chainID *big.Int,
 	sender Account, nonce uint64, value int64) error {
 
 	var data []byte
@@ -429,7 +424,7 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 		log.Fatal("Error in signing tx: ", err)
 	}
 
-	err = Clients.SendTransaction(ctx, signedTx)
+	err = clients.SendTransaction(ctx, signedTx)
 	if err != nil {
 		fmt.Printf("Error in sending tx: %s, From : %s, To : %s\n", err, sender.addr, recipient.Hash())
 	}

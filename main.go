@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
-	"fmt"
 	"log"
 	"math/big"
 	"os"
@@ -38,10 +37,18 @@ type Config struct {
 	Fund        bool   `env:"FUND"`
 }
 
+const (
+	txPrice     = 21000
+	gasPrice    = 1000000000
+	hugeBalance = 10000000000000000
+
+	arbitraryBigToWait = 15 * time.Second
+)
+
 func main() {
 	err := godotenv.Load(".env")
 	if err != nil {
-		log.Fatalf("Some error occured. Err: %s", err)
+		log.Fatalf("Some error occurred. Err: %s", err)
 	}
 
 	var cfg Config
@@ -51,9 +58,9 @@ func main() {
 	}
 
 	if cfg.MaxAccounts == 0 && cfg.MaxSize == 0 {
-		fmt.Println("Both MAX_ACCOUNTS and MAX_SIZE flags cannot be empty")
-		return
+		log.Println("Both MAX_ACCOUNTS and MAX_SIZE flags cannot be empty")
 
+		return
 	}
 
 	spew.Dump(cfg)
@@ -62,8 +69,7 @@ func main() {
 }
 
 func run(cfg *Config) {
-
-	fmt.Printf("script started \n")
+	log.Println("script started")
 
 	ctx := context.Background()
 
@@ -76,42 +82,46 @@ func run(cfg *Config) {
 	if err != nil {
 		log.Println("Error in fetching chainID: ", err)
 	}
-	fmt.Println("Chain ID: ", chainID)
+
+	log.Println("Chain ID: ", chainID)
 
 	sk := crypto.ToECDSAUnsafe(common.FromHex(cfg.SK))
+
 	ksOpts, err := bind.NewKeyedTransactorWithChainID(sk, chainID)
 	if err != nil {
 		log.Println("Error in getting ksOpts: ", err)
 	}
+
 	add := crypto.PubkeyToAddress(sk.PublicKey)
 
 	balance, err := cl.BalanceAt(ctx, add, nil)
 	if err != nil {
 		log.Println("Error in checking balance: ", err)
 	}
-	fmt.Println("Balance: ", balance)
+
+	log.Println("Balance: ", balance)
 
 	localNonce, err := cl.PendingNonceAt(ctx, add)
 	if err != nil {
 		log.Fatalln("Error in getting pendingNonce: ", localNonce)
 	}
 
-	fmt.Println("Nonce: ", localNonce)
+	log.Println("Nonce: ", localNonce)
 
-	generatedAccounts := generateAccountsUsingMnemonic(ctx, cl, cfg)
+	generatedAccounts := generateAccountsUsingMnemonic(cfg)
 
 	if cfg.Fund {
-		fundAccounts(ctx, cl, generatedAccounts, chainID, add, localNonce, cfg.TPS, ksOpts)
+		fundAccounts(ctx, cl, generatedAccounts, add, localNonce, cfg.TPS, ksOpts)
 	}
 
 	initialSize := checkChainData(cfg)
 
-	fmt.Println("Preparing")
+	log.Println("Preparing")
 
 	if cfg.Fund {
-		fmt.Println("Loadbot Starting in 15 secs")
+		log.Println("Loadbot Starting in 15 secs")
 
-		time.Sleep(15 * time.Second)
+		time.Sleep(arbitraryBigToWait)
 	} else {
 		time.Sleep(2 * time.Second)
 	}
@@ -126,7 +136,7 @@ type Account struct {
 
 type Accounts []Account
 
-func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client, cfg *Config) (accounts Accounts) {
+func generateAccountsUsingMnemonic(cfg *Config) (accounts Accounts) {
 	wallet, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
 	if err != nil {
 		log.Fatal(err)
@@ -155,34 +165,32 @@ func generateAccountsUsingMnemonic(ctx context.Context, client *ethclient.Client
 	return accounts
 }
 
-func fundAccounts(ctx context.Context, client *ethclient.Client, genAccounts Accounts, chainID *big.Int,
+func fundAccounts(ctx context.Context, client *ethclient.Client, genAccounts Accounts,
 	senderAddress common.Address, localNonce uint64, tps int, opts *bind.TransactOpts) {
 	for i := 0; i < tps; i++ {
-		fmt.Println("Reqd nonce: ", localNonce+uint64(i))
+		log.Println("Reqd nonce: ", localNonce+uint64(i))
 
-		runTransaction(ctx, client, genAccounts[i].addr, chainID, senderAddress, opts, localNonce+uint64(i), 10000000000000000)
+		runTransaction(ctx, client, genAccounts[i].addr, senderAddress, opts, localNonce+uint64(i), hugeBalance)
 	}
 }
 
-func runTransaction(ctx context.Context, Clients *ethclient.Client, recipient common.Address, chainID *big.Int,
+func runTransaction(ctx context.Context, clients *ethclient.Client, recipient common.Address,
 	senderAddress common.Address, opts *bind.TransactOpts, nonce uint64, value int64) {
+	log.Println("Running transaction : ", nonce)
 
-	fmt.Println("Running transaction : ", nonce)
 	var data []byte
-	gasLimit := uint64(21000)
 
-	gasPrice := big.NewInt(1000000000)
-
+	gasLimit := uint64(txPrice)
+	gasPrice := big.NewInt(gasPrice)
 	val := big.NewInt(value)
-
 	tx := types.NewTransaction(nonce, recipient, val, gasLimit, gasPrice, data)
 
 	signedTx, err := opts.Signer(senderAddress, tx)
-
 	if err != nil {
 		log.Fatal("Error in signing tx: ", err)
 	}
-	err = Clients.SendTransaction(ctx, signedTx)
+
+	err = clients.SendTransaction(ctx, signedTx)
 	if err != nil {
 		log.Fatal("Error in sending tx: ", err)
 	}
@@ -195,28 +203,30 @@ func createAccount() Account {
 	}
 
 	publicKey := privateKey.Public()
+
 	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
 		log.Fatal("cannot assert type: publicKey is not of type *ecdsa.PublicKey")
 	}
 
 	address := crypto.PubkeyToAddress(*publicKeyECDSA)
-
 	account := Account{key: privateKey, addr: address}
-	return account
 
+	return account
 }
 
 type Nonces struct {
 	nonces []*uint64
 }
 
+//nolint:gocognit,cyclop
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
 	genAccounts Accounts, cfg *Config, initialSize int64) {
-
-	checksInProgress := new(int64)
-	pendingNonceInProgress := new(int64)
-	transactionInProgress := new(int64)
+	var (
+		checksInProgress       = new(int64)
+		pendingNonceInProgress = new(int64)
+		transactionInProgress  = new(int64)
+	)
 
 	if cfg.MaxSize > 0 {
 		go func() {
@@ -226,32 +236,34 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 			for {
 				currentSize := checkChainData(cfg)
 				if (currentSize - initialSize) > int64(cfg.MaxSize) {
-					fmt.Println("Size limit reached!!!")
+					log.Println("Size limit reached!!!")
 					os.Exit(0)
 				}
 
-				time.Sleep(10 * time.Second)
+				time.Sleep(arbitraryBigToWait)
 			}
-
 		}()
 	}
 
-	fmt.Printf("Loadbot started \n")
+	log.Println("Loadbot started")
+
 	noncesStruct := &Nonces{
 		nonces: make([]*uint64, cfg.TPS),
 	}
 
 	for i, a := range genAccounts[:cfg.TPS] {
-		fmt.Printf("i is %v \n", i)
+		log.Printf("i is %v \n", i)
 
 		go func(i int, a Account) {
 			atomic.AddInt64(pendingNonceInProgress, 1)
 			defer atomic.AddInt64(pendingNonceInProgress, -1)
 
-			// fixme: why do we need it? at the beginning all nonces are 0, after starting sending transactions we are storing local nonces.
+			// fixme: why do we need it? at the beginning all nonces are 0,
+			// after starting sending transactions we are storing local nonces.
 			nonce, err := client.PendingNonceAt(ctx, a.addr)
 			if err != nil {
-				fmt.Printf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
+				log.Printf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
+
 				return
 			}
 
@@ -259,9 +271,12 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 		}(i, a)
 	}
 
-	fmt.Printf("intialization completed \n")
-	recpIdx := 0
-	sendIdx := 0
+	log.Println("intialization completed")
+
+	var (
+		recpIdx int
+		sendIdx int
+	)
 
 	// Fire off transactions
 	period := 1 * time.Second / time.Duration(cfg.TPS)
@@ -270,7 +285,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	iteration := new(int64)
 
 	for {
-		fmt.Printf("goroutines: transactions %d, checks %d, getting nonces %d\n",
+		log.Printf("goroutines: transactions %d, checks %d, getting nonces %d\n",
 			atomic.LoadInt64(transactionInProgress),
 			atomic.LoadInt64(checksInProgress),
 			atomic.LoadInt64(pendingNonceInProgress),
@@ -281,7 +296,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 			currentIteration := atomic.LoadInt64(iteration)
 
 			if currentIteration%100 == 0 && currentIteration > 0 {
-				fmt.Println("CURRENT_ACCOUNTS: ", iteration)
+				log.Println("CURRENT_ACCOUNTS: ", iteration)
 			}
 
 			if cfg.MaxAccounts > 0 && currentIteration >= int64(cfg.MaxAccounts) {
@@ -298,8 +313,10 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 
 			const repeats = 5
 
+			errCh := make(chan error)
+
 			// FIXME: we do nothing with the error
-			go func(sender Account, nonce uint64) error {
+			go func(sender Account, nonce uint64) {
 				atomic.AddInt64(transactionInProgress, 1)
 				defer atomic.AddInt64(transactionInProgress, -1)
 
@@ -309,18 +326,21 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 
 					err := runBotTransaction(ctx, client, recipient, chainID, sender, nonce+uint64(i), 1, iteration)
 					if err != nil {
-						return err
+						errCh <- err
+
+						return
 					}
 
 					atomic.AddUint64(noncesStruct.nonces[accountIDx], 1)
 				}
 
-				return nil
-
+				errCh <- nil
 			}(sender, nonce)
 
-		case <-ctx.Done():
-			// return group.Wait()
+			//fixme:do something with errCh
+			// err = <-errCh
+
+		case <-ctx.Done(): // return group.Wait()
 		}
 	}
 }
@@ -338,31 +358,41 @@ func genRandomGas(min int64, max int64) *big.Int {
 
 func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient common.Address, chainID *big.Int,
 	sender Account, nonce uint64, value int64, iteration *int64) error {
+	var (
+		data     []byte
+		gasPrice *big.Int
+	)
 
-	var data []byte
-	gasLimit := uint64(21000)
-	var gasPrice *big.Int
+	gasLimit := txPrice
 
-	r := nonce % 6
-	switch r {
+	const (
+		gasStep = 2000
+		baseGas = 32000
+	)
+
+	var n int64
+
+	// it is completely arbitrary
+	switch r := nonce % 6; r {
 	case 0:
-		gasPrice = genRandomGas(32000, 34000)
+		n = 0
 	case 1:
-		gasPrice = genRandomGas(22000, 24000)
+		n = 5
 	case 2:
-		gasPrice = genRandomGas(28000, 30000)
+		n = 2
 	case 3:
-		gasPrice = genRandomGas(26000, 28000)
+		n = 3
 	case 4:
-		gasPrice = genRandomGas(20000, 24000)
+		n = 6
 	case 5:
-		gasPrice = genRandomGas(30000, 32000)
-
+		n = 1
 	}
 
+	minGas, maxGas := gasRange(baseGas, gasStep, n)
+	gasPrice = genRandomGas(minGas, maxGas)
 	val := big.NewInt(value)
 
-	tx := types.NewTransaction(nonce, recipient, val, gasLimit, gasPrice, data)
+	tx := types.NewTransaction(nonce, recipient, val, uint64(gasLimit), gasPrice, data)
 
 	sk := crypto.ToECDSAUnsafe(crypto.FromECDSA(sender.key)) // Sign the transaction
 
@@ -378,7 +408,7 @@ func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient
 
 	err = clients.SendTransaction(ctx, signedTx)
 	if err != nil {
-		fmt.Printf("Error in sending tx: %s, From : %s, To : %s\n", err, sender.addr, recipient.Hash())
+		log.Printf("Error in sending tx: %s, From : %s, To : %s\n", err, sender.addr, recipient.Hash())
 	}
 
 	// Nonce++
@@ -387,8 +417,16 @@ func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient
 	return err
 }
 
+func gasRange(baseGas, gasStep, n int64) (int64, int64) {
+	minGas := baseGas - n*gasStep
+	maxGas := minGas + gasStep
+
+	return minGas, maxGas
+}
+
 func checkChainData(cfg *Config) int64 {
 	var size int64
+
 	err := filepath.Walk(cfg.DataPath, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -402,11 +440,11 @@ func checkChainData(cfg *Config) int64 {
 	})
 
 	if err != nil {
-		fmt.Println("Error in getting chaindata size: ", err)
+		log.Println("Error in getting chaindata size: ", err)
 		os.Exit(0)
 	}
 
-	fmt.Print("chaindata size: ", size/1024, "KB\n\n") // Originally the size is in returned in bytes
+	log.Printf("chaindata size: %dKB\n\n", size/1024) // Originally the size is in returned in bytes
 
 	return size / 1024
 }

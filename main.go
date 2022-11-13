@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"errors"
 	"log"
 	"math/big"
 	"os"
@@ -38,9 +39,10 @@ type Config struct {
 }
 
 const (
-	txPrice     = 21000
-	gasPrice    = 1000000000
-	hugeBalance = 10000000000000000
+	txPrice      = 21000
+	gasPrice     = 1000000000
+	hugeBalance  = 10000000000000000
+	minimalDelay = 500 * time.Nanosecond
 
 	arbitraryBigToWait = 15 * time.Second
 )
@@ -126,7 +128,10 @@ func run(cfg *Config) {
 		time.Sleep(2 * time.Second)
 	}
 
-	startLoadbot(ctx, cl, chainID, generatedAccounts, cfg, initialSize)
+	err = startLoadbot(ctx, cl, chainID, generatedAccounts, cfg, initialSize)
+	if err != nil {
+		log.Println("DONE with error", err)
+	}
 }
 
 type Account struct {
@@ -216,17 +221,24 @@ func createAccount() Account {
 }
 
 type Nonces struct {
-	nonces []*uint64
+	nonces []uint64 // atomic
 }
 
+var (
+	errMaxAccounts = errors.New("max accounts reached")
+	errMaxSize     = errors.New("max size reached")
+)
+
 //nolint:gocognit,cyclop
-func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
-	genAccounts Accounts, cfg *Config, initialSize int64) {
+func startLoadbot(ctx context.Context, client ethClient, chainID *big.Int,
+	genAccounts Accounts, cfg *Config, initialSize int64) error {
 	var (
 		checksInProgress       = new(int64)
 		pendingNonceInProgress = new(int64)
 		transactionInProgress  = new(int64)
 	)
+
+	errMaxSizeCh := make(chan error, 1)
 
 	if cfg.MaxSize > 0 {
 		go func() {
@@ -236,8 +248,9 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 			for {
 				currentSize := checkChainData(cfg)
 				if (currentSize - initialSize) > int64(cfg.MaxSize) {
-					log.Println("Size limit reached!!!")
-					os.Exit(0)
+					errMaxSizeCh <- errMaxSize
+
+					return
 				}
 
 				time.Sleep(arbitraryBigToWait)
@@ -248,7 +261,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 	log.Println("Loadbot started")
 
 	noncesStruct := &Nonces{
-		nonces: make([]*uint64, cfg.TPS),
+		nonces: make([]uint64, cfg.TPS),
 	}
 
 	for i, a := range genAccounts[:cfg.TPS] {
@@ -267,7 +280,7 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 				return
 			}
 
-			atomic.StoreUint64(noncesStruct.nonces[i], nonce)
+			atomic.StoreUint64(&noncesStruct.nonces[i], nonce)
 		}(i, a)
 	}
 
@@ -280,27 +293,36 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 
 	// Fire off transactions
 	period := 1 * time.Second / time.Duration(cfg.TPS)
+	if period < minimalDelay {
+		period = minimalDelay // we don't want to go lower
+	}
+
 	ticker := time.NewTicker(period)
+	defer ticker.Stop()
 
 	iteration := new(int64)
 
+	var prev time.Time
+
 	for {
-		log.Printf("goroutines: transactions %d, checks %d, getting nonces %d\n",
-			atomic.LoadInt64(transactionInProgress),
-			atomic.LoadInt64(checksInProgress),
-			atomic.LoadInt64(pendingNonceInProgress),
-		)
+		prev = time.Now()
 
 		select {
 		case <-ticker.C:
 			currentIteration := atomic.LoadInt64(iteration)
 
 			if currentIteration%100 == 0 && currentIteration > 0 {
-				log.Println("CURRENT_ACCOUNTS: ", iteration)
+				log.Printf("goroutines: iteration %d, transactions %d, checks %d, getting nonces %d, duration %v\n",
+					currentIteration,
+					atomic.LoadInt64(transactionInProgress),
+					atomic.LoadInt64(checksInProgress),
+					atomic.LoadInt64(pendingNonceInProgress),
+					time.Since(prev),
+				)
 			}
 
 			if cfg.MaxAccounts > 0 && currentIteration >= int64(cfg.MaxAccounts) {
-				os.Exit(0)
+				return errMaxAccounts
 			}
 
 			recpIdx++
@@ -309,11 +331,11 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 			accountIDx := sendIdx % cfg.TPS
 
 			sender := genAccounts[accountIDx] //cfg.Accounts[sendIdx%len(cfg.Accounts)]
-			nonce := atomic.LoadUint64(noncesStruct.nonces[accountIDx])
+			nonce := atomic.LoadUint64(&noncesStruct.nonces[accountIDx])
 
 			const repeats = 5
 
-			errCh := make(chan error)
+			errCh := make(chan error, 100)
 
 			// FIXME: we do nothing with the error
 			go func(sender Account, nonce uint64) {
@@ -331,16 +353,20 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 						return
 					}
 
-					atomic.AddUint64(noncesStruct.nonces[accountIDx], 1)
+					atomic.AddUint64(&noncesStruct.nonces[accountIDx], 1)
 				}
-
-				errCh <- nil
 			}(sender, nonce)
 
-			//fixme:do something with errCh
-			// err = <-errCh
+			select {
+			//nolint:gosimple
+			case _ = <-errCh:
+				//fixme:do something meaningful with errCh
+			default:
+			}
 
 		case <-ctx.Done(): // return group.Wait()
+		case err := <-errMaxSizeCh:
+			return err
 		}
 	}
 }
@@ -356,7 +382,7 @@ func genRandomGas(min int64, max int64) *big.Int {
 	return big.NewInt(n.Int64() + min)
 }
 
-func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient common.Address, chainID *big.Int,
+func runBotTransaction(ctx context.Context, clients ethClient, recipient common.Address, chainID *big.Int,
 	sender Account, nonce uint64, value int64, iteration *int64) error {
 	var (
 		data     []byte
@@ -415,6 +441,11 @@ func runBotTransaction(ctx context.Context, clients *ethclient.Client, recipient
 	atomic.AddInt64(iteration, 1)
 
 	return err
+}
+
+type ethClient interface {
+	SendTransaction(ctx context.Context, tx *types.Transaction) error
+	PendingNonceAt(ctx context.Context, account common.Address) (uint64, error)
 }
 
 func gasRange(baseGas, gasStep, n int64) (int64, int64) {

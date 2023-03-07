@@ -262,7 +262,7 @@ type Nonces struct {
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
 	genAccounts Accounts) {
 
-	if MAX_SIZE > 0 {
+	if MAX_SIZE > 0 && INITIAL_SIZE > 0 {
 		go func() {
 			for {
 
@@ -453,7 +453,7 @@ func checkChainData() int64 {
 
 	if err != nil {
 		fmt.Println("Error in getting chaindata size: ", err)
-		os.Exit(0)
+		return -1
 	}
 	fmt.Print("chaindata size: ", size/1024, "KB\n\n") // Originally the size is in returned in bytes
 

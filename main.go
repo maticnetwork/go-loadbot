@@ -218,7 +218,7 @@ func runTransaction(ctx context.Context, Clients *ethclient.Client, recipient co
 	var data []byte
 	gasLimit := uint64(21000)
 
-	gasPrice := big.NewInt(1000000000)
+	gasPrice := big.NewInt(2200000000)
 
 	val := big.NewInt(value)
 
@@ -399,17 +399,17 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 	r := nonce % 6
 	switch r {
 	case 0:
-		gasPrice = genRandomGas(1320000000, 1340000000)
+		gasPrice = genRandomGas(2320000000, 2340000000)
 	case 1:
-		gasPrice = genRandomGas(1220000000, 1240000000)
+		gasPrice = genRandomGas(2220000000, 2240000000)
 	case 2:
-		gasPrice = genRandomGas(1280000000, 1300000000)
+		gasPrice = genRandomGas(2280000000, 2300000000)
 	case 3:
-		gasPrice = genRandomGas(1260000000, 1280000000)
+		gasPrice = genRandomGas(2260000000, 2280000000)
 	case 4:
-		gasPrice = genRandomGas(1200000000, 1240000000)
+		gasPrice = genRandomGas(2200000000, 2240000000)
 	case 5:
-		gasPrice = genRandomGas(1300000000, 1320000000)
+		gasPrice = genRandomGas(2300000000, 2320000000)
 
 	}
 

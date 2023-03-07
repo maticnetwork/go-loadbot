@@ -399,17 +399,17 @@ func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient
 	r := nonce % 6
 	switch r {
 	case 0:
-		gasPrice = genRandomGas(32000, 34000)
+		gasPrice = genRandomGas(1320000000, 1340000000)
 	case 1:
-		gasPrice = genRandomGas(22000, 24000)
+		gasPrice = genRandomGas(1220000000, 1240000000)
 	case 2:
-		gasPrice = genRandomGas(28000, 30000)
+		gasPrice = genRandomGas(1280000000, 1300000000)
 	case 3:
-		gasPrice = genRandomGas(26000, 28000)
+		gasPrice = genRandomGas(1260000000, 1280000000)
 	case 4:
-		gasPrice = genRandomGas(20000, 24000)
+		gasPrice = genRandomGas(1200000000, 1240000000)
 	case 5:
-		gasPrice = genRandomGas(30000, 32000)
+		gasPrice = genRandomGas(1300000000, 1320000000)
 
 	}
 

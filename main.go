@@ -509,6 +509,7 @@ func deploySmartContract(ctx context.Context, Clients *ethclient.Client, chainID
 	if err != nil {
 		fmt.Printf("Error in sending deployment tx: %s, From : %s, To : %s\n", err, sender)
 	}
+	fmt.Println("Contract Deployemennt Attempted")
 
 	contractAddr := crypto.CreateAddress(sender, nonce)
 
@@ -518,7 +519,7 @@ func deploySmartContract(ctx context.Context, Clients *ethclient.Client, chainID
 func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient common.Address, chainID *big.Int,
 	sender Account, nonce uint64, value int64, data []byte) error {
 
-	gasLimit := uint64(21000)
+	gasLimit := uint64(storageCallTxGas)
 	var gasPrice *big.Int
 
 	r := nonce % 6

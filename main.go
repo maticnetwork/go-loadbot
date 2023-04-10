@@ -25,6 +25,13 @@ import (
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
+const (
+	storageContractByteCode   = "608060405234801561001057600080fd5b50610150806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80632e64cec11461003b5780636057361d14610059575b600080fd5b610043610075565b60405161005091906100a1565b60405180910390f35b610073600480360381019061006e91906100ed565b61007e565b005b60008054905090565b8060008190555050565b6000819050919050565b61009b81610088565b82525050565b60006020820190506100b66000830184610092565b92915050565b600080fd5b6100ca81610088565b81146100d557600080fd5b50565b6000813590506100e7816100c1565b92915050565b600060208284031215610103576101026100bc565b5b6000610111848285016100d8565b9150509291505056fea2646970667358221220322c78243e61b783558509c9cc22cb8493dde6925aa5e89a08cdf6e22f279ef164736f6c63430008120033"
+	storageContractTxCallData = "0x6057361d0000000000000000000000000000000000000000000000000000000000000001"
+	storageCallTxGas          = 100000
+	testGas                   = 144109
+)
+
 var RPC_SERVER string
 var MNEMONIC string
 var SK string
@@ -36,6 +43,7 @@ var DATA_PATH string
 var CURRENT_ITERATIONS int = 0
 var Nonce uint64 = 0
 var INITIAL_SIZE int64
+var CONTRACTS string
 
 func main() {
 	err := godotenv.Load(".env")
@@ -103,6 +111,8 @@ func main() {
 		return
 	}
 
+	CONTRACTS = os.Getenv("CONTRACTS")
+
 	fmt.Println("RPC_SERVER: ", RPC_SERVER)
 	fmt.Println("MNEMONIC: ", MNEMONIC)
 	fmt.Println("SK: ", SK)
@@ -110,6 +120,7 @@ func main() {
 	fmt.Println("MAX_ACCOUNTS: ", MAX_ACCOUNTS)
 	fmt.Println("MAX_SIZE: ", MAX_SIZE)
 	fmt.Println("DATA_PATH: ", DATA_PATH)
+	fmt.Println("CONTRACTS: ", CONTRACTS)
 
 	main1()
 }
@@ -169,8 +180,17 @@ func main1() {
 		time.Sleep(2 * time.Second)
 	}
 
-	startLoadbot(ctx, cl, chainID, generatedAccounts)
-
+	if CONTRACTS == "true" {
+		nonce, err := cl.PendingNonceAt(ctx, add)
+		if err != nil {
+			fmt.Printf("failed to retrieve pending nonce for account %s: %v", add.String(), err)
+		}
+		contractAddr, _ := deploySmartContract(ctx, cl, chainID, add, nonce, ksOpts)
+		time.Sleep(5 * time.Second)
+		startContractsLoadbot(ctx, cl, chainID, generatedAccounts, contractAddr)
+	} else {
+		startLoadbot(ctx, cl, chainID, generatedAccounts)
+	}
 }
 
 type Account struct {
@@ -259,6 +279,90 @@ type Nonces struct {
 	nonces []uint64
 }
 
+func startContractsLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int, genAccounts Accounts, contractAddr common.Address) {
+	if MAX_SIZE > 0 && INITIAL_SIZE > 0 {
+		go func() {
+			for {
+
+				currentSize := checkChainData()
+				if (currentSize - INITIAL_SIZE) > int64(MAX_SIZE) {
+					fmt.Println("Size limit reached!!!")
+					os.Exit(0)
+				}
+
+				time.Sleep(10 * time.Second)
+			}
+
+		}()
+	}
+
+	fmt.Printf("Loadbot started \n")
+	noncesStruct := &Nonces{
+		nonces: make([]uint64, N),
+	}
+
+	flag := 0
+	for i, a := range genAccounts {
+		if flag >= N {
+			break
+		}
+		flag++
+		fmt.Printf("i is %v \n", i)
+		go func(i int, a Account, m *sync.Mutex) {
+			nonce, err := client.PendingNonceAt(ctx, a.addr)
+			if err != nil {
+				fmt.Printf("failed to retrieve pending nonce for account %s: %v", a.addr.String(), err)
+			}
+			m.Lock()
+			noncesStruct.nonces[i] = nonce
+			m.Unlock()
+		}(i, a, &noncesStruct.mu)
+	}
+
+	fmt.Printf("intialization completed \n")
+	recpIdx := 0
+	sendIdx := 0
+
+	// Fire off transactions
+	period := 1 * time.Second / time.Duration(N)
+	ticker := time.NewTicker(period)
+
+	for {
+		select {
+		case <-ticker.C:
+
+			if CURRENT_ITERATIONS%100 == 0 && CURRENT_ITERATIONS > 0 {
+				fmt.Println("CURRENT_ACCOUNTS: ", CURRENT_ITERATIONS)
+			}
+			if MAX_ACCOUNTS > 0 && CURRENT_ITERATIONS >= MAX_ACCOUNTS {
+				os.Exit(0)
+			}
+
+			recpIdx++
+			sendIdx++
+			sender := genAccounts[sendIdx%N] //cfg.Accounts[sendIdx%len(cfg.Accounts)]
+			nonce := noncesStruct.nonces[sendIdx%N]
+
+			go func(sender Account, nonce uint64) error {
+
+				for i := 0; i < 4; i++ {
+					err := runBotTransaction(ctx, client, contractAddr, chainID, sender, nonce+uint64(i), 1, common.FromHex(storageContractTxCallData))
+					if err != nil {
+						return err
+					}
+				}
+
+				return nil
+
+			}(sender, nonce)
+			noncesStruct.nonces[sendIdx%N] = noncesStruct.nonces[sendIdx%N] + 5
+
+		case <-ctx.Done():
+			// return group.Wait()
+		}
+	}
+}
+
 func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.Int,
 	genAccounts Accounts) {
 
@@ -342,27 +446,27 @@ func startLoadbot(ctx context.Context, client *ethclient.Client, chainID *big.In
 				recpointer5 := createAccount()
 				recipient5 := recpointer5.addr
 
-				err := runBotTransaction(ctx, client, recipient, chainID, sender, nonce, 1)
+				err := runBotTransaction(ctx, client, recipient, chainID, sender, nonce, 1, []byte{})
 				if err != nil {
 					return err
 				}
 
-				err = runBotTransaction(ctx, client, recipient2, chainID, sender, nonce+1, 1)
+				err = runBotTransaction(ctx, client, recipient2, chainID, sender, nonce+1, 1, []byte{})
 				if err != nil {
 					return err
 				}
 
-				err = runBotTransaction(ctx, client, recipient3, chainID, sender, nonce+2, 1)
+				err = runBotTransaction(ctx, client, recipient3, chainID, sender, nonce+2, 1, []byte{})
 				if err != nil {
 					return err
 				}
 
-				err = runBotTransaction(ctx, client, recipient4, chainID, sender, nonce+3, 1)
+				err = runBotTransaction(ctx, client, recipient4, chainID, sender, nonce+3, 1, []byte{})
 				if err != nil {
 					return err
 				}
 
-				err = runBotTransaction(ctx, client, recipient5, chainID, sender, nonce+4, 1)
+				err = runBotTransaction(ctx, client, recipient5, chainID, sender, nonce+4, 1, []byte{})
 				if err != nil {
 					return err
 				}
@@ -389,10 +493,31 @@ func genRandomGas(min int64, max int64) *big.Int {
 	return big.NewInt(n.Int64() + min)
 }
 
-func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient common.Address, chainID *big.Int,
-	sender Account, nonce uint64, value int64) error {
+func deploySmartContract(ctx context.Context, Clients *ethclient.Client, chainID *big.Int, sender common.Address, nonce uint64, opts *bind.TransactOpts) (common.Address, error) {
+	var data = common.FromHex(storageContractByteCode)
 
-	var data []byte
+	gasPrice := big.NewInt(2200000000)
+
+	tx, _ := types.NewContractCreation(nonce, big.NewInt(0), testGas, gasPrice, data), types.HomesteadSigner{}
+
+	signedTx, err := opts.Signer(sender, tx)
+	if err != nil {
+		log.Fatal("Error in signing tx: ", err)
+	}
+
+	err = Clients.SendTransaction(ctx, signedTx)
+	if err != nil {
+		fmt.Printf("Error in sending deployment tx: %s, From : %s, To : %s\n", err, sender)
+	}
+
+	contractAddr := crypto.CreateAddress(sender, nonce)
+
+	return contractAddr, err
+}
+
+func runBotTransaction(ctx context.Context, Clients *ethclient.Client, recipient common.Address, chainID *big.Int,
+	sender Account, nonce uint64, value int64, data []byte) error {
+
 	gasLimit := uint64(21000)
 	var gasPrice *big.Int
 

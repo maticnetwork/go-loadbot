@@ -345,7 +345,7 @@ func startContractsLoadbot(ctx context.Context, client *ethclient.Client, chainI
 
 			go func(sender Account, nonce uint64) error {
 
-				for i := 0; i < 4; i++ {
+				for i := 0; i < 5; i++ {
 					err := runBotTransaction(ctx, client, contractAddr, chainID, sender, nonce+uint64(i), 1, common.FromHex(storageContractTxCallData))
 					if err != nil {
 						return err
